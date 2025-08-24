@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>星評価ツール</title>
+  <style>
+    :root {
+      --star-size: 40px; /* サイズ変更はここだけ */
+      --gap: 6px;
+      --active: #f5a623; /* 塗りつぶし色 */
+      --inactive: #ddd;  /* 空の色 */
+      --focus: #1e90ff;  /* フォーカス枠 */
+      --bg: #fff;
+      --text: #222;
+    }
+    html,body { height: 100%; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans JP", "Apple Color Emoji", "Segoe UI Emoji";
+      margin: 0; padding: 24px; background: var(--bg); color: var(--text);
+      display: grid; place-items: start center; gap: 24px;
+    }
+    .card {
+      width: min(680px, 92vw);
+      background: #fff; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.08);
+      padding: 20px 20px 16px;
+    }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    p  { margin: 0 0 14px; color: #555; }
+
+    /* ★ レーティング本体 */
+    .rating {
+      display: inline-flex; align-items: center; gap: var(--gap);
+    }
+    .star {
+      width: var(--star-size); height: var(--star-size);
+      inline-size: var(--star-size);
+      block-size: var(--star-size);
+      background: none; border: none; padding: 0; cursor: pointer;
+      position: relative; outline: none; isolation: isolate;
+    }
+    .star::before, .star::after {
+      content: ""; position: absolute; inset: 0;
+      -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="black"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27z"/></svg>') center/contain no-repeat;
+              mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="black"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27z"/></svg>') center/contain no-repeat;
+    }
+    .star::before { background: var(--inactive); }
+    .star::after  { background: var(--active); clip-path: inset(0 0 0 100%); transition: clip-path .18s ease-in-out; }
+
+    /* hover時にプレビュー */
+    .star:hover ~ .star::after { clip-path: inset(0 0 0 100%); }
+    .star:hover::after,
+    .star.preview::after { clip-path: inset(0 0 0 0%); }
+
+    /* 選択済みの星は常に塗りつぶし */
+    .star.filled::after { clip-path: inset(0 0 0 0%); }
+
+    /* キーボード用フォーカス */
+    .star:focus-visible { outline: 3px solid var(--focus); border-radius: 12px; }
+
+    .value { margin-left: 12px; font-weight: 700; }
+
+    .controls { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .controls > * { font: inherit; padding: 8px 12px; border-radius: 10px; border: 1px solid #ddd; background: #fafafa; }
+    .controls input[type="number"] { width: 90px; }
+    .muted { color: #777; font-size: 12px; margin-top: 8px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+    textarea.copy-area {
+      width: 100%;
+      height: 50px;
+      margin-top: 12px;
+      font-size: 20px;
+      text-align: center;
+      resize: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>星評価ツール（クリック・タップ・← → キー対応）</h1>
+    <p>選んだ数だけ★が塗りつぶされます。下のボックスからコピーできます。</p>
+
+    <!-- 実体：data-max で最大数、data-readonly で読取専用 -->
+    <div id="rating1" class="rating" role="radiogroup" aria-label="星評価" data-max="5">
+      <!-- JSが挿入します -->
+    </div>
+    <span id="value1" class="value" aria-live="polite">0 / 5</span>
+
+    <textarea id="copyStars" class="copy-area" readonly>☆☆☆☆☆</textarea>
+
+    <div class="controls">
+      <button id="clear">クリア</button>
+      <label>
+        最大値：<input id="max" type="number" min="1" max="10" value="5">
+      </label>
+      <label>
+        既定の値：<input id="preset" type="number" min="0" max="10" value="3">
+      </label>
+      <label><input id="readonly" type="checkbox"> 読み取り専用</label>
+    </div>
+  </div>
+
+  <script>
+    // 文字だけの星列を生成（例: ★★★☆☆）
+    function starString(rating, max = 5) {
+      rating = Math.max(0, Math.min(max, Math.floor(Number(rating) || 0)));
+      return "★".repeat(rating) + "☆".repeat(max - rating);
+    }
+
+    // インタラクティブな星UIを作るクラス
+    class StarRating {
+      constructor(root, { max = 5, value = 0, readonly = false } = {}) {
+        this.root = root;
+        this.max = Math.max(1, Math.floor(max));
+        this.value = Math.max(0, Math.min(this.max, Math.floor(value)));
+        this.readonly = !!readonly;
+        this.render();
+        this.update();
+      }
+      render() {
+        this.root.innerHTML = '';
+        this.root.dataset.max = String(this.max);
+        this.root.setAttribute('aria-readonly', String(this.readonly));
+        this.stars = [];
+        for (let i = 1; i <= this.max; i++) {
+          const btn = document.createElement('button');
+          btn.className = 'star';
+          btn.role = 'radio';
+          btn.setAttribute('aria-label', `${i} / ${this.max}`);
+          btn.dataset.value = String(i);
+          // マウスプレビュー
+          btn.addEventListener('mouseenter', () => this.preview(i));
+          btn.addEventListener('mouseleave', () => this.preview(0));
+          // クリック選択
+          btn.addEventListener('click', (e) => {
+            if (this.readonly) return;
+            this.setValue(i);
+          });
+          this.root.appendChild(btn);
+          this.stars.push(btn);
+        }
+        // グループイベント（キーボード）
+        this.root.tabIndex = 0;
+        this.root.addEventListener('keydown', (e) => {
+          if (this.readonly) return;
+          if (e.key === 'ArrowRight') { this.setValue(Math.min(this.max, this.value + 1)); e.preventDefault(); }
+          if (e.key === 'ArrowLeft')  { this.setValue(Math.max(0, this.value - 1)); e.preventDefault(); }
+          if (e.key === 'Home') { this.setValue(0); e.preventDefault(); }
+          if (e.key === 'End')  { this.setValue(this.max); e.preventDefault(); }
+        });
+        this.root.addEventListener('focus', () => {
+          const target = this.stars[Math.max(0, this.value - 1)] || this.stars[0];
+          target?.focus({ preventScroll: true });
+        });
+      }
+      setValue(v) {
+        this.value = Math.max(0, Math.min(this.max, Math.floor(v)));
+        this.update();
+        this.root.dispatchEvent(new CustomEvent('change', { detail: { value: this.value, max: this.max } }));
+      }
+      setMax(m) { this.max = Math.max(1, Math.floor(m)); this.render(); this.update(); }
+      setReadonly(ro) { this.readonly = !!ro; this.root.setAttribute('aria-readonly', String(this.readonly)); }
+      preview(i) {
+        this.stars.forEach((s, idx) => {
+          s.classList.toggle('preview', idx < i);
+        });
+      }
+      update() {
+        this.stars.forEach((s, idx) => {
+          const filled = idx < this.value;
+          s.classList.toggle('filled', filled);
+          s.setAttribute('aria-checked', String(filled));
+        });
+        document.getElementById('value1').textContent = `${this.value} / ${this.max}`;
+        document.getElementById('copyStars').value = starString(this.value, this.max);
+      }
+    }
+
+    // 起動
+    const ratingEl = document.getElementById('rating1');
+    const rating = new StarRating(ratingEl, { max: 5, value: 0, readonly: false });
+
+    // UI操作
+    document.getElementById('clear').addEventListener('click', () => rating.setValue(0));
+    document.getElementById('max').addEventListener('input', (e) => {
+      const m = Number(e.target.value || 5);
+      rating.setMax(m);
+      // プリセットのmaxも更新範囲を合わせる
+      document.getElementById('preset').max = String(m);
+    });
+    document.getElementById('preset').addEventListener('input', (e) => {
+      rating.setValue(Number(e.target.value || 0));
+    });
+    document.getElementById('readonly').addEventListener('change', (e) => rating.setReadonly(e.target.checked));
+  </script>
+</body>
+</html>
